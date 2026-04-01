@@ -1,46 +1,13 @@
 package store
-
-import (
-	"database/sql"
-	"fmt"
-	"os"
-	"path/filepath"
-
-	_ "modernc.org/sqlite"
-)
-
-type DB struct {
-	*sql.DB
-}
-
-func Open(dataDir string) (*DB, error) {
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		return nil, fmt.Errorf("mkdir: %w", err)
-	}
-	dsn := filepath.Join(dataDir, "parcel.db") + "?_journal_mode=WAL&_busy_timeout=5000"
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return nil, fmt.Errorf("open: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	if err := migrate(db); err != nil {
-		return nil, fmt.Errorf("migrate: %w", err)
-	}
-	return &DB{db}, nil
-}
-
-func migrate(db *sql.DB) error {
-	_, err := db.Exec(`CREATE TABLE IF NOT EXISTS files (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        token TEXT NOT NULL UNIQUE,
-        filename TEXT NOT NULL,
-        size_bytes INTEGER NOT NULL,
-        mime_type TEXT,
-        expires_at DATETIME,
-        download_count INTEGER DEFAULT 0,
-        max_downloads INTEGER,
-        password_hash TEXT,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-     );`)
-	return err
-}
+import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{*sql.DB;DataDir string}
+type Upload struct{ID int64 `json:"id"`;Filename string `json:"filename"`;OriginalName string `json:"original_name"`;Size int64 `json:"size"`;MimeType string `json:"mime_type"`;ShareToken string `json:"share_token"`;Downloads int `json:"downloads"`;MaxDownloads int `json:"max_downloads"`;ExpiresAt *time.Time `json:"expires_at"`;CreatedAt time.Time `json:"created_at"`}
+func Open(dataDir string)(*DB,error){if err:=os.MkdirAll(dataDir,0755);err!=nil{return nil,fmt.Errorf("mkdir: %w",err)};if err:=os.MkdirAll(filepath.Join(dataDir,"files"),0755);err!=nil{return nil,err};dsn:=filepath.Join(dataDir,"parcel.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);if err:=migrate(db);err!=nil{return nil,fmt.Errorf("migrate: %w",err)};return &DB{DB:db,DataDir:dataDir},nil}
+func migrate(db *sql.DB)error{_,err:=db.Exec(`CREATE TABLE IF NOT EXISTS uploads(id INTEGER PRIMARY KEY AUTOINCREMENT,filename TEXT NOT NULL,original_name TEXT NOT NULL,size INTEGER NOT NULL,mime_type TEXT DEFAULT 'application/octet-stream',share_token TEXT NOT NULL UNIQUE,downloads INTEGER DEFAULT 0,max_downloads INTEGER DEFAULT 0,expires_at DATETIME,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`);return err}
+func(db *DB)CreateUpload(u *Upload)error{res,err:=db.Exec(`INSERT INTO uploads(filename,original_name,size,mime_type,share_token,max_downloads,expires_at)VALUES(?,?,?,?,?,?,?)`,u.Filename,u.OriginalName,u.Size,u.MimeType,u.ShareToken,u.MaxDownloads,u.ExpiresAt);if err!=nil{return err};u.ID,_=res.LastInsertId();return nil}
+func(db *DB)GetUploadByToken(token string)(*Upload,error){u:=&Upload{};err:=db.QueryRow(`SELECT id,filename,original_name,size,mime_type,share_token,downloads,max_downloads,expires_at,created_at FROM uploads WHERE share_token=?`,token).Scan(&u.ID,&u.Filename,&u.OriginalName,&u.Size,&u.MimeType,&u.ShareToken,&u.Downloads,&u.MaxDownloads,&u.ExpiresAt,&u.CreatedAt);if err==sql.ErrNoRows{return nil,nil};return u,err}
+func(db *DB)IncrDownloads(id int64){db.Exec(`UPDATE uploads SET downloads=downloads+1 WHERE id=?`,id)}
+func(db *DB)DeleteUpload(id int64,filename string){db.Exec(`DELETE FROM uploads WHERE id=?`,id)}
+func(db *DB)ListUploads()([]Upload,error){rows,err:=db.Query(`SELECT id,filename,original_name,size,mime_type,share_token,downloads,max_downloads,expires_at,created_at FROM uploads ORDER BY created_at DESC`);if err!=nil{return nil,err};defer rows.Close();var out[]Upload;for rows.Next(){var u Upload;rows.Scan(&u.ID,&u.Filename,&u.OriginalName,&u.Size,&u.MimeType,&u.ShareToken,&u.Downloads,&u.MaxDownloads,&u.ExpiresAt,&u.CreatedAt);out=append(out,u)};return out,nil}
+func(db *DB)CountUploads()(int,error){var n int;db.QueryRow(`SELECT COUNT(*) FROM uploads`).Scan(&n);return n,nil}
+func(db *DB)TotalSize()(int64,error){var n int64;db.QueryRow(`SELECT COALESCE(SUM(size),0) FROM uploads`).Scan(&n);return n,nil}
