@@ -1,0 +1,15 @@
+version: '3.8'
+services:
+  parcel:
+    build: .
+    ports:
+      - "9140:9140"
+    environment:
+      - PORT=9140
+      - DATA_DIR=/data
+      - PARCEL_LICENSE_KEY=
+    volumes:
+      - parcel_data:/data
+    restart: unless-stopped
+volumes:
+  parcel_data:
