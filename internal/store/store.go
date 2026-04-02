@@ -1,13 +1,24 @@
 package store
-import("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
-type DB struct{*sql.DB;DataDir string}
-type Upload struct{ID int64 `json:"id"`;Filename string `json:"filename"`;OriginalName string `json:"original_name"`;Size int64 `json:"size"`;MimeType string `json:"mime_type"`;ShareToken string `json:"share_token"`;Downloads int `json:"downloads"`;MaxDownloads int `json:"max_downloads"`;ExpiresAt *time.Time `json:"expires_at"`;CreatedAt time.Time `json:"created_at"`}
-func Open(dataDir string)(*DB,error){if err:=os.MkdirAll(dataDir,0755);err!=nil{return nil,fmt.Errorf("mkdir: %w",err)};if err:=os.MkdirAll(filepath.Join(dataDir,"files"),0755);err!=nil{return nil,err};dsn:=filepath.Join(dataDir,"parcel.db")+"?_journal_mode=WAL&_busy_timeout=5000";db,err:=sql.Open("sqlite",dsn);if err!=nil{return nil,fmt.Errorf("open: %w",err)};db.SetMaxOpenConns(1);if err:=migrate(db);err!=nil{return nil,fmt.Errorf("migrate: %w",err)};return &DB{DB:db,DataDir:dataDir},nil}
-func migrate(db *sql.DB)error{_,err:=db.Exec(`CREATE TABLE IF NOT EXISTS uploads(id INTEGER PRIMARY KEY AUTOINCREMENT,filename TEXT NOT NULL,original_name TEXT NOT NULL,size INTEGER NOT NULL,mime_type TEXT DEFAULT 'application/octet-stream',share_token TEXT NOT NULL UNIQUE,downloads INTEGER DEFAULT 0,max_downloads INTEGER DEFAULT 0,expires_at DATETIME,created_at DATETIME DEFAULT CURRENT_TIMESTAMP);`);return err}
-func(db *DB)CreateUpload(u *Upload)error{res,err:=db.Exec(`INSERT INTO uploads(filename,original_name,size,mime_type,share_token,max_downloads,expires_at)VALUES(?,?,?,?,?,?,?)`,u.Filename,u.OriginalName,u.Size,u.MimeType,u.ShareToken,u.MaxDownloads,u.ExpiresAt);if err!=nil{return err};u.ID,_=res.LastInsertId();return nil}
-func(db *DB)GetUploadByToken(token string)(*Upload,error){u:=&Upload{};err:=db.QueryRow(`SELECT id,filename,original_name,size,mime_type,share_token,downloads,max_downloads,expires_at,created_at FROM uploads WHERE share_token=?`,token).Scan(&u.ID,&u.Filename,&u.OriginalName,&u.Size,&u.MimeType,&u.ShareToken,&u.Downloads,&u.MaxDownloads,&u.ExpiresAt,&u.CreatedAt);if err==sql.ErrNoRows{return nil,nil};return u,err}
-func(db *DB)IncrDownloads(id int64){db.Exec(`UPDATE uploads SET downloads=downloads+1 WHERE id=?`,id)}
-func(db *DB)DeleteUpload(id int64,filename string){db.Exec(`DELETE FROM uploads WHERE id=?`,id)}
-func(db *DB)ListUploads()([]Upload,error){rows,err:=db.Query(`SELECT id,filename,original_name,size,mime_type,share_token,downloads,max_downloads,expires_at,created_at FROM uploads ORDER BY created_at DESC`);if err!=nil{return nil,err};defer rows.Close();var out[]Upload;for rows.Next(){var u Upload;rows.Scan(&u.ID,&u.Filename,&u.OriginalName,&u.Size,&u.MimeType,&u.ShareToken,&u.Downloads,&u.MaxDownloads,&u.ExpiresAt,&u.CreatedAt);out=append(out,u)};return out,nil}
-func(db *DB)CountUploads()(int,error){var n int;db.QueryRow(`SELECT COUNT(*) FROM uploads`).Scan(&n);return n,nil}
-func(db *DB)TotalSize()(int64,error){var n int64;db.QueryRow(`SELECT COALESCE(SUM(size),0) FROM uploads`).Scan(&n);return n,nil}
+import ("database/sql";"fmt";"os";"path/filepath";"time";_ "modernc.org/sqlite")
+type DB struct{db *sql.DB}
+type Package struct{
+	ID string `json:"id"`
+	Name string `json:"name"`
+	Version string `json:"version"`
+	Registry string `json:"registry"`
+	Ecosystem string `json:"ecosystem"`
+	Size string `json:"size"`
+	Checksum string `json:"checksum"`
+	CreatedAt string `json:"created_at"`
+}
+func Open(d string)(*DB,error){if err:=os.MkdirAll(d,0755);err!=nil{return nil,err};db,err:=sql.Open("sqlite",filepath.Join(d,"parcel.db")+"?_journal_mode=WAL&_busy_timeout=5000");if err!=nil{return nil,err}
+db.Exec(`CREATE TABLE IF NOT EXISTS packages(id TEXT PRIMARY KEY,name TEXT NOT NULL,version TEXT DEFAULT '',registry TEXT DEFAULT '',ecosystem TEXT DEFAULT '',size TEXT DEFAULT '',checksum TEXT DEFAULT '',created_at TEXT DEFAULT(datetime('now')))`)
+return &DB{db:db},nil}
+func(d *DB)Close()error{return d.db.Close()}
+func genID()string{return fmt.Sprintf("%d",time.Now().UnixNano())}
+func now()string{return time.Now().UTC().Format(time.RFC3339)}
+func(d *DB)Create(e *Package)error{e.ID=genID();e.CreatedAt=now();_,err:=d.db.Exec(`INSERT INTO packages(id,name,version,registry,ecosystem,size,checksum,created_at)VALUES(?,?,?,?,?,?,?,?)`,e.ID,e.Name,e.Version,e.Registry,e.Ecosystem,e.Size,e.Checksum,e.CreatedAt);return err}
+func(d *DB)Get(id string)*Package{var e Package;if d.db.QueryRow(`SELECT id,name,version,registry,ecosystem,size,checksum,created_at FROM packages WHERE id=?`,id).Scan(&e.ID,&e.Name,&e.Version,&e.Registry,&e.Ecosystem,&e.Size,&e.Checksum,&e.CreatedAt)!=nil{return nil};return &e}
+func(d *DB)List()[]Package{rows,_:=d.db.Query(`SELECT id,name,version,registry,ecosystem,size,checksum,created_at FROM packages ORDER BY created_at DESC`);if rows==nil{return nil};defer rows.Close();var o []Package;for rows.Next(){var e Package;rows.Scan(&e.ID,&e.Name,&e.Version,&e.Registry,&e.Ecosystem,&e.Size,&e.Checksum,&e.CreatedAt);o=append(o,e)};return o}
+func(d *DB)Delete(id string)error{_,err:=d.db.Exec(`DELETE FROM packages WHERE id=?`,id);return err}
+func(d *DB)Count()int{var n int;d.db.QueryRow(`SELECT COUNT(*) FROM packages`).Scan(&n);return n}
